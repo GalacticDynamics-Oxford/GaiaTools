@@ -1,13 +1,12 @@
 import numpy, scipy.linalg, scipy.optimize
 
-# angular correlation function of systematic errors (two possible choices):
+# angular correlation function of systematic errors:
 # x is the angular distance between two points in degrees,
-# return the covariance of each component of proper motion in (mas/yr)^2.
-# non-oscillatory choice (conservative):
-covfnc1 = lambda x:  0.0036* numpy.exp(-x / 0.25      ) + 0.0008 * numpy.exp(-x / 20.)
-# oscillatory choice (more optimistic):
-covfnc2 = lambda x:  0.004 * numpy.sinc(x / 0.5 + 0.25) + 0.0008 * numpy.exp(-x / 20.)
+# return the covariance of each component of proper motion in (mas/yr)^2
+covfncpm  = lambda x: 0.0004 / (1 + x / 0.3) + 0.0003 * numpy.exp(-x / 12.0)
 
+# a similar covariance function for parallax, return value in mas^2
+covfncplx = lambda x: 0.00005 / (1 + x / 0.3) + 0.00007 * numpy.exp(-x / 30.0 - (x / 50.0)**2)
 
 def angular_distance(ra0, dec0, ra1, dec1):
     '''
@@ -169,6 +168,59 @@ def get_mean_pm(ra, dec, pmra, pmdec, pmra_error, pmdec_error, pmra_pmdec_corr, 
         sigerr= 0.
 
     return sol[0], sol[1], covar[0,0]**0.5, covar[1,1]**0.5, covar[0,1] / (covar[0,0]*covar[1,1])**0.5, sigval, sigerr
+
+
+def get_mean_plx(ra, dec, plx, plx_error, covfnc=None, gmag=None):
+    '''
+    Compute the mean parallax for a cluster of stars, possibly taking into account
+    spatially correlated systematic errors.
+
+    Input consists of several arrays of length N (the number of stars), as given in the Gaia catalogue:
+    ra -- right ascension (azimuthal angle, or longitude) of stars, measured in degrees
+    dec -- declination (latitude), measured in degrees [-90 to +90]
+    plx -- parallax
+    plx_error -- parallax uncertainty
+    covfnc (optional) -- spatial covariance function for parallax errors, e.g., covfncplx, or None
+    gmag (optional) -- G-band magnitude (used to scale the parallax covariance function)
+
+    Return: mean parallax and its uncertainty
+    '''
+
+    nstar  = len(ra)
+    if not covfnc is None:
+        # covariance matrix of systematic errors depending on the distance between two stars:
+        # [ [ C11  C12  ...  C1n ]
+        #   [ C12  C22  ...  C2n ]
+        #   [ ...  ...  ...  ... ]
+        #   [ C1n  C2n  ...  Cnn ] ]
+        # where Cij = covfnc(angular_distance(star_i, star_j))
+        covmat = numpy.array([ covfnc( angular_distance(ra, dec, ra0, dec0) )
+            for ra0, dec0 in zip(ra, dec) ])
+
+        # magnitude-dependent scaling of covariance function
+        if not gmag is None:
+            covfncmul = numpy.maximum(1.0, gmag-17)
+            for i in range(len(plx)):
+                covmat[i] *= numpy.minimum(covfncmul, covfncmul[i])
+
+        # add statistical errors along the main diagonal:
+        # [ [ E1   0  ...  0  ]
+        #   [  0  E2  ...  0  ]
+        #   [ ... ... ... ... ]
+        #   [  0   0  ... En  ] ]
+        covmat += numpy.diag(plx_error**2)
+
+        # obtain the Cholesky decomposition of covariance matrix
+        chol  = numpy.linalg.cholesky(covmat)
+        Cinv  = scipy.linalg.cho_solve((chol, True), numpy.ones(len(plx)))
+        covar = numpy.sum(Cinv)**-1           # squared parallax uncertainty
+        mean  = numpy.dot(Cinv, plx) * covar  # mean parallax (the solution)
+
+    else:  # a simpler case with no spatial correlations
+        covar = numpy.sum(plx_error**-2)**-1
+        mean  = numpy.sum(plx * plx_error**-2) * covar
+
+    return mean, covar**0.5
 
 
 def create_cluster(nstar, radius, sigma=0, covfnc=None):

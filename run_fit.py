@@ -2,7 +2,7 @@
 # whether to account for spatially correlated systematic errors when estimating the uncertainty on mean PM
 use_systematic_error = True
 if use_systematic_error:
-    from get_mean_pm import get_mean_pm, covfnc1
+    import get_mean_pm
 
 import numpy, scipy.optimize
 try:
@@ -26,15 +26,14 @@ for linein in filein:
     name  = line[0]
     if linein[0]=='#':
         fileout.write(linein)
-        #print("%s skipped" % name)
         continue
     ra0   = float(line[1])  # degrees
     dec0  = float(line[2])  # degrees
     dist  = float(line[3])  # kpc
-    vdisp = float(line[6])  # km/s
-    rmax  = float(line[7])  # arcmin
-    pmra0 = float(line[8])  # initial guess for the cluster PMra
-    pmdec0= float(line[9])  # same for PMdec
+    vdisp = float(line[7])  # km/s
+    rmax  = float(line[8])  # arcmin
+    pmra0 = float(line[9])  # initial guess for the cluster PMra
+    pmdec0= float(line[10]) # same for PMdec
 
     # read data file that was previously retrieved from the Gaia archive
     data  = numpy.load('data/'+name+'.npz')
@@ -45,11 +44,16 @@ for linein in filein:
     pmrae = data['pmra_error'].astype(float)
     pmdece= data['pmdec_error'].astype(float)
     pmcorr= data['pmra_pmdec_corr'].astype(float)
+    plx   = data['parallax'].astype(float)
+    plxe  = data['parallax_error'].astype(float)
     bprp  = data['bp_rp']
     gmag  = data['phot_g_mean_mag']
     ruwe  = data['ruwe']
     aen   = data['astrometric_excess_noise']
-    phen  = data['phot_bp_rp_excess_factor']
+    penn  = numpy.where(bprp<0.5, 1.1544+0.0338*bprp+0.0323*bprp**2,
+            numpy.where(bprp<4.0, 1.1620+0.0115*bprp+0.0493*bprp**2-0.00588*bprp**3, 1.0576+0.1405*bprp))
+    pen   = data['phot_bp_rp_excess_factor'] - penn  # excess flux minus the global trend
+    pens  = pen / (0.006 + 8.8e-12 * gmag**7.62)     # magnitude-dependent scaling factor
 
     # coordinate transformation from sky to tangent plane (orthogonal projection)
     sin   = numpy.sin
@@ -76,8 +80,9 @@ for linein in filein:
     filt  = (rdist < rmax)                # distance filter
     filt *= (pmra**2 + pmdec**2 < 30**2)  # eliminate spurious very large PM
     filt *= (ruwe<1.2) * (aen<1.0)        # eliminate unreliable PM from astrometric excess noise and RUWE
-    if not name in ['AM_1', 'Crater', 'Pal_3', 'Pal_4', 'Terzan_6_HP_5']:
-        filt *= (phen < 1.3 + 0.06*bprp**2)  # eliminate mostly faint sources in crowded regions
+    filt *= pens < 3.0                    # filter on photometric excess (mostly faint sources in crowded regions)
+    if numpy.sum(filt)<50 or name in ['Liller_1', 'VVV_CL002', 'UKS_1', 'Ryu_879_RLGC2']:
+        filt += True  # ignore filter, otherwise there are too few sources
 
     # filtered PM and their uncertainty covariance matrices for each star
     # (for simplicity, refer to them as "x,y", not "ra,dec")
@@ -215,14 +220,14 @@ for linein in filein:
     if use_systematic_error:
         # select stars likely belonging to the cluster (cannot use probabilistic membership at this stage)
         filtprob= memberprob>=0.8
-        maxused = 10000   # limit the maximum number of stars, as the cost scales as N^3
+        maxused = 2000   # limit the maximum number of stars, as the cost scales as N^3
         if sum(filtprob) > maxused:
             filtprob *= gmag < numpy.sort(gmag[filtprob])[maxused]  # retain only brighter stars
 
         # use the routine from the supplementary module to compute the mean PM and its uncertainty
-        result = get_mean_pm(ra[filtprob], dec[filtprob], pmra[filtprob], pmdec[filtprob],
+        result = get_mean_pm.get_mean_pm(ra[filtprob], dec[filtprob], pmra[filtprob], pmdec[filtprob],
             pmrae[filtprob], pmdece[filtprob], pmcorr[filtprob],
-            sigma=clust_disp, rsigma=clust_rsigma, covfnc=covfnc1)
+            sigma=clust_disp, rsigma=clust_rsigma, covfnc=get_mean_pm.covfncpm)
 
         # take these values if the uncertainty is larger than inferred without accounting for systematics
         if result[2]+result[3] > clust_pmrae+clust_pmdece:
@@ -232,27 +237,33 @@ for linein in filein:
             clust_pmdece= result[3]
             clust_pmcorr= result[4]
 
+        # also compute the mean parallax accounting for correlated systematics
+        clust_plx, clust_plxe = get_mean_pm.get_mean_plx(
+            ra[filtprob], dec[filtprob], plx[filtprob], plxe[filtprob],
+            covfnc=get_mean_pm.covfncplx, gmag=gmag[filtprob])
+
+    else:  # compute mean plx with only statistical uncertainties
+        clust_plx, clust_plxe = get_mean_pm.get_mean_plx(ra, dec, plx, plxe)
+
     # finally, write the summary results for this cluster to the output file and print them to screen
     print("%s:  Total=%d,  PMfilt=%.1f,  PMra=%.3f +- %.3f,  PMdec=%.3f +- %.3f,  corr=%.3f,  rscale=%.2f,  PMdisp=%.3f" % \
         (name, sum(filt), sum(memberprob), clust_pmra, clust_pmrae, clust_pmdec, clust_pmdece, clust_pmcorr, clust_rscale, clust_disp))
-    line[0] = "%-15s"% name
-    line[8] = "%.3f" % clust_pmra
-    line[9] = "%.3f" % clust_pmdec
-    line += [ "%.3f" % clust_pmrae,
-              "%.3f" % clust_pmdece,
-              "%.3f" % clust_pmcorr,
-              "%.1f" %(clust_weight * len(star_rdist)),
-              "%.2f" % clust_rscale,
-              "%.3f" % clust_disp ]
+    line = ["%-15s"% name] + line[1:9] + [
+        "%.3f" % clust_pmra,
+        "%.3f" % clust_pmdec,
+        "%.3f" % clust_pmrae,
+        "%.3f" % clust_pmdece,
+        "%.3f" % clust_pmcorr,
+        "%.3f" % clust_plx,
+        "%.3f" % clust_plxe ]
     fileout.write("\t".join(line) + "\n")
     fileout.flush()
 
     # write the data for all stars into a text file
     numpy.savetxt('data/'+name+'.txt', numpy.column_stack((
-        x, y, mx, my, mxe, mye, mcorr,
-        gmag, bprp, filt, memberprob)), fmt='%.7g',
-        header='x   y   pmx    pmy    pmx_e  pmy_e  pm_corr g_mag bp_rp filter  memberprob\n'+
-               'deg deg mas/yr mas/yr mas/yr mas/yr dimless mag   mag   zeroone float')
+        ra, dec, x, y, pmra, pmdec, pmrae, pmdece, pmcorr,
+        gmag, bprp, filt, memberprob)), fmt='%.4f %.4f'+' %.6g'*11,
+        header='ra   dec   x   y   pmra    pmdec    pmra_e  pmdec_e  pm_corr g_mag bp_rp filter  memberprob')
 
 filein.close()
 fileout.close()

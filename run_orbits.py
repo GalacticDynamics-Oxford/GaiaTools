@@ -1,6 +1,4 @@
-import numpy
-from astropy import units as u
-from astropy import coordinates as coord
+import numpy, agama
 
 # STEP 1: create Monte Carlo realizations of position and velocity of each cluster,
 # sampling from their measured uncertainties.
@@ -12,15 +10,16 @@ tab   = tab[:,1:].astype(float)  # remaining columns are numbers
 ra0   = tab[:,0]   # coordinates of cluster centers [deg]
 dec0  = tab[:,1]
 dist0 = tab[:,2]   # distance [kpc]
-vlos0 = tab[:,3]   # line-of-sight velocity [km/s]
-vlose = tab[:,4]   # its error estimate
-pmra0 = tab[:,7]   # mean proper motion [mas/yr]
-pmdec0= tab[:,8]
-pmrae = tab[:,9]   # its uncertainty
-pmdece= tab[:,10]
-pmcorr= tab[:,11]  # correlation coefficient for errors in two PM components
+diste = tab[:,3]   # distance error [kpc]
+vlos0 = tab[:,4]   # line-of-sight velocity [km/s]
+vlose = tab[:,5]   # its error estimate
+pmra0 = tab[:,8]   # mean proper motion [mas/yr]
+pmdec0= tab[:,9]
+pmrae = tab[:,10]   # its uncertainty
+pmdece= tab[:,11]
+pmcorr= tab[:,12]  # correlation coefficient for errors in two PM components
 vlose = numpy.maximum(vlose, 2.0)  # assumed error of at least 2 km/s on line-of-sight velocity
-diste = dist0 * 0.46*0.1           # assumed error of 0.1 mag in distance modulus
+diste[~numpy.isfinite(diste)] = dist0[~numpy.isfinite(diste)] * 0.05   # assumed error of 0.1 mag in distance modulus when not known
 
 # create bootstrap samples
 numpy.random.seed(42)  # ensure repeatability of random samples
@@ -40,26 +39,20 @@ vlos  = numpy.repeat(vlos0, nboot) + numpy.hstack([numpy.random.normal(scale=e, 
 dist  = numpy.repeat(dist0, nboot) + numpy.hstack([numpy.random.normal(scale=e, size=nboot) for e in diste])
 
 # convert coordinates from heliocentric (ra,dec,dist,PM,vlos) to Galactocentric (kpc and km/s)
-u.kms = u.km/u.s
-c_sky = coord.ICRS(ra=ra*u.degree, dec=dec*u.degree, pm_ra_cosdec=pmra*u.mas/u.yr, pm_dec=pmdec*u.mas/u.yr, distance=dist*u.kpc, radial_velocity=vlos*u.kms)
-c_gal = c_sky.transform_to(coord.Galactocentric(galcen_distance=8.2*u.kpc, galcen_v_sun=coord.CartesianDifferential([10., 248., 7.]*u.kms)))
-pos   = numpy.column_stack((c_gal.  x/u.kpc, c_gal.  y/u.kpc, c_gal.  z/u.kpc))
-vel   = numpy.column_stack((c_gal.v_x/u.kms, c_gal.v_y/u.kms, c_gal.v_z/u.kms))
-# add uncertainties from the solar position and velocity
-pos[:,0] += numpy.random.normal(scale=0.1, size=nboot*nclust)  # uncertainty in solar distance from Galactic center
-vel[:,0] += numpy.random.normal(scale=1.0, size=nboot*nclust)  # uncertainty in solar velocity
-vel[:,1] += numpy.random.normal(scale=3.0, size=nboot*nclust)
-vel[:,2] += numpy.random.normal(scale=1.0, size=nboot*nclust)
-pos[:,0] *= -1  # revert back to normal orientation of coordinate system (solar position at x=+8.2)
-vel[:,0] *= -1  # same for velocity
-posvel= numpy.column_stack((pos,vel))
+d2r = numpy.pi/180
+l, b, pml, pmb = agama.transformCelestialCoords(agama.fromICRStoGalactic, ra*d2r, dec*d2r, pmra, pmdec)
+posvel = numpy.column_stack(agama.getGalactocentricFromGalactic(l, b, dist, pml*4.74, pmb*4.74, vlos))
 numpy.savetxt('posvel.txt', posvel, fmt='%.6g')
 
+try:
+    nanpercentile = numpy.nanpercentile
+except AttributeError:  # older numpy versions don't have this function
+    def nanpercentile(x, *args, **namedargs):  # an approximation which is not quite the same though..
+        return numpy.array(numpy.percentile(numpy.nan_to_num(x), *args, **namedargs))
 
 # STEP 2: compute the orbits, min/max galactocentric radii, and actions, for all Monte Carlo samples
-import agama
-print(agama.setUnits(length=1, velocity=1, mass=1))  # units: kpc, km/s, Msun; time unit ~ 1 Gyr
-potential = agama.Potential('McMillan17.ini')        # MW potential from McMillan(2017)
+agama.setUnits(length=1, velocity=1, mass=1)   # units: kpc, km/s, Msun; time unit ~ 1 Gyr
+potential = agama.Potential('McMillan17.ini')  # MW potential from McMillan(2017) - may choose another one
 
 # compute orbits for each realization of initial conditions,
 # integrated for 100 dynamical times or 20 Gyr (whichever is lower)
@@ -73,18 +66,19 @@ for i,o in enumerate(orbits):
     rmin[i] = numpy.min(r) if len(r)>0 else numpy.nan
     rmax[i] = numpy.max(r) if len(r)>0 else numpy.nan
 # replace nboot samples rmin/rmax with their median and 68% confidence intervals for each cluster
-rmin = numpy.nanpercentile(rmin.reshape(nclust, nboot), [16,50,84], axis=1)
-rmax = numpy.nanpercentile(rmax.reshape(nclust, nboot), [16,50,84], axis=1)
+rmin = nanpercentile(rmin.reshape(nclust, nboot), [16,50,84], axis=1)
+rmax = nanpercentile(rmax.reshape(nclust, nboot), [16,50,84], axis=1)
+print rmin, rmin.shape
 
 # compute actions for the same initial conditions
 actfinder = agama.ActionFinder(potential)
 actions = actfinder(posvel)
 # again compute the median and 68% confidence intervals for each cluster
-actions = numpy.nanpercentile(actions.reshape(nclust, nboot, 3), [16,50,84], axis=1)
+actions = nanpercentile(actions.reshape(nclust, nboot, 3), [16,50,84], axis=1)
 
 # compute the same confidence intervals for the total energy
 energy  = potential.potential(posvel[:,0:3]) + 0.5 * numpy.sum(posvel[:,3:6]**2, axis=1)
-energy  = numpy.percentile(energy.reshape(nclust, nboot), [16,50,84], axis=1)
+energy  = numpy.array(numpy.percentile(energy.reshape(nclust, nboot), [16,50,84], axis=1))
 
 # write the orbit parameters, actions and energy - one line per cluster, with the median and uncertainties
 fileout = open("result_orbits.txt", "w")
