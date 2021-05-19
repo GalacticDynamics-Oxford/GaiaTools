@@ -15,11 +15,13 @@ vlos0 = tab[:,4]   # line-of-sight velocity [km/s]
 vlose = tab[:,5]   # its error estimate
 pmra0 = tab[:,8]   # mean proper motion [mas/yr]
 pmdec0= tab[:,9]
-pmrae = tab[:,10]   # its uncertainty
-pmdece= tab[:,11]
-pmcorr= tab[:,12]  # correlation coefficient for errors in two PM components
+pmrae = tab[:,11]  # its uncertainty
+pmdece= tab[:,12]
+pmcorr= tab[:,13]  # correlation coefficient for errors in two PM components
 vlose = numpy.maximum(vlose, 2.0)  # assumed error of at least 2 km/s on line-of-sight velocity
 diste[~numpy.isfinite(diste)] = dist0[~numpy.isfinite(diste)] * 0.05   # assumed error of 0.1 mag in distance modulus when not known
+vlos0[~numpy.isfinite(vlos0)] = 0.0   # replace non-existent line-of-sight velocity measurements
+vlose[~numpy.isfinite(vlose)] = 150.0 # with dummy values and large uncertainties
 
 # create bootstrap samples
 numpy.random.seed(42)  # ensure repeatability of random samples
@@ -68,7 +70,6 @@ for i,o in enumerate(orbits):
 # replace nboot samples rmin/rmax with their median and 68% confidence intervals for each cluster
 rmin = nanpercentile(rmin.reshape(nclust, nboot), [16,50,84], axis=1)
 rmax = nanpercentile(rmax.reshape(nclust, nboot), [16,50,84], axis=1)
-print rmin, rmin.shape
 
 # compute actions for the same initial conditions
 actfinder = agama.ActionFinder(potential)

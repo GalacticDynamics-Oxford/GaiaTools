@@ -282,7 +282,9 @@ def create_cluster(nstar, radius, sigma=0, covfnc=None):
 ##### test/example of the usage for the above code #####
 
 if __name__ == '__main__':
-    import matplotlib.patches, matplotlib.pyplot as plt
+    import sys
+    plot = len(sys.argv)>1   # run with any command-line argument to plot the demo results
+    if plot: import matplotlib.patches, matplotlib.pyplot as plt
 
     def ellipse(meanx, meany, sigmax, sigmay, corr, **kw):
         # draw error ellipse defined by standard deviations and correlation coefficient
@@ -295,29 +297,28 @@ if __name__ == '__main__':
         return matplotlib.patches.Ellipse((meanx,meany), width=(2*(sum+det))**0.5, height=(2*(sum-det))**0.5, angle=180/numpy.pi*ang, **kw)
 
 
-    def test(nstar, radius, sigma=0, covfnc=None, plot=False, fix_sigma=False):
+    def test(nstar, radius, sigma=0, covfnc=None, fix_sigma=False):
         ra, dec, pmra, pmdec, pmra_err, pmdec_err, pm_corr = create_cluster(nstar, radius, sigma, covfnc)
         meanpmra, meanpmdec, errpmra, errpmdec, corr, sigma, sigerr = \
             get_mean_pm(ra, dec, pmra, pmdec, pmra_err, pmdec_err, pm_corr, sigma if fix_sigma else None, radius, covfnc)
-        print("pmra=%.3f  pmdec=%.3f  pmra_err=%.3f  pmdec_err=%.3f  corr=%.3f  sigma=%.3f  sigma_err=%.3f" % \
-            (meanpmra, meanpmdec, errpmra, errpmdec, corr, sigma, sigerr))
+        print("pmra=%.3f +- %.3f,  pmdec=%.3f +- %.3f,  sigma=%.3f +- %.3f" % \
+            (meanpmra, errpmra, meanpmdec, errpmdec, sigma, sigerr))
         if plot:
             for i in range(nstar):
                 plt.gca().add_artist(ellipse(pmra[i], pmdec[i], pmra_err[i], pmdec_err[i], pm_corr[i],
                     alpha=0.1, lw=0, color=numpy.random.rand(3,1)))
             plt.plot(0, 0, 'o', color='b', markeredgewidth=0)  # true value
             plt.errorbar(meanpmra, meanpmdec, xerr=errpmra, yerr=errpmdec, color='r', markeredgewidth=0)
-            plt.xlim(-1, 1)
-            plt.ylim(-1, 1)
+            plt.xlim(-5, 5)
+            plt.ylim(-5, 5)
             plt.show()
 
-    numpy.random.seed(142)
     print('sigma=0, with sys.err.: fix sigma or infer it from data')
-    test(nstar=500, radius=0.5, sigma=0.0, covfnc=covfnc1, fix_sigma=True)
-    test(nstar=500, radius=0.5, sigma=0.0, covfnc=covfnc1)
+    test(nstar=500, radius=0.5, sigma=0.0, covfnc=covfncpm, fix_sigma=True)
+    test(nstar=500, radius=0.5, sigma=0.0, covfnc=covfncpm)
     print('sigma=0.3, with sys.err.')
-    test(nstar=500, radius=0.5, sigma=0.3, covfnc=covfnc1, fix_sigma=True)
-    test(nstar=500, radius=0.5, sigma=0.3, covfnc=covfnc1)
+    test(nstar=500, radius=0.5, sigma=0.3, covfnc=covfncpm, fix_sigma=True)
+    test(nstar=500, radius=0.5, sigma=0.3, covfnc=covfncpm)
     print('sigma=0, no sys.err.')
     test(nstar=500, radius=0.5, sigma=0.0, covfnc=None, fix_sigma=True)
     test(nstar=500, radius=0.5, sigma=0.0, covfnc=None)

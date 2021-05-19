@@ -248,14 +248,14 @@ for linein in filein:
     # finally, write the summary results for this cluster to the output file and print them to screen
     print("%s:  Total=%d,  PMfilt=%.1f,  PMra=%.3f +- %.3f,  PMdec=%.3f +- %.3f,  corr=%.3f,  rscale=%.2f,  PMdisp=%.3f" % \
         (name, sum(filt), sum(memberprob), clust_pmra, clust_pmrae, clust_pmdec, clust_pmdece, clust_pmcorr, clust_rscale, clust_disp))
-    line = ["%-15s"% name] + line[1:9] + [
-        "%.3f" % clust_pmra,
-        "%.3f" % clust_pmdec,
-        "%.3f" % clust_pmrae,
-        "%.3f" % clust_pmdece,
-        "%.3f" % clust_pmcorr,
-        "%.3f" % clust_plx,
-        "%.3f" % clust_plxe ]
+    line = ["%-15s"% name] + ['%7s' % item for item in line[1:9]] + [
+        "%7.3f" % clust_pmra,
+        "%7.3f" % clust_pmdec,
+        "%7.3f" % clust_plx,
+        "%7.3f" % clust_pmrae,
+        "%7.3f" % clust_pmdece,
+        "%7.3f" % clust_pmcorr,
+        "%7.3f" % clust_plxe ]
     fileout.write("\t".join(line) + "\n")
     fileout.flush()
 
